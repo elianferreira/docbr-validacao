@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.expo/
+expo-env.d.ts
+*.tsbuildinfo
+.env
+.env.local
+src/**/__generated__/
+coverage/
+test-results/
+playwright-report/

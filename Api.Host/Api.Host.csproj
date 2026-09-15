@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Api.Host</RootNamespace>
+    <AssemblyName>Api.Host</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotNetEnv" Version="3.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <!-- Pin direto porque Microsoft.AspNetCore.OpenApi 10.0.10 ainda resolve
+         Microsoft.OpenApi 2.0.0, vulneravel ao GHSA-v5pm-xwqc-g5wc. Sem o pin o
+         restore falha em NU1903 por causa do TreatWarningsAsErrors. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocBr.Ocr\DocBr.Ocr.csproj" />
+    <ProjectReference Include="..\DocBr.Validacao\DocBr.Validacao.csproj" />
+  </ItemGroup>
+
+</Project>

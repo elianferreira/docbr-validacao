@@ -1,0 +1,104 @@
+# Pipeline padrao Univali (skapp) — backend .NET 10 + frontend Expo.
+# desenv: push em main/feature/* -> build+push (dev-<sha>) + rollout no ns desenv.
+# prod:   tag (1.0.NNN)          -> build+push (<tag>) + rollout no ns producao (rollback no fail).
+# CI vars de grupo: REGISTRY/REGISTRY_USER/REGISTRY_PASSWORD, KUBECONFIG_CONTENT.
+stages:
+  - qualidade
+  - deploy
+
+default:
+  interruptible: true
+
+variables:
+  IMG_DEV: "skdocker.univali.br/sistemas/docbrd-backend"
+  IMG_PRD: "skdocker.univali.br/sistemas/docbr-backend"
+
+.deploy_auth_setup: &deploy_auth_setup |
+  echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+  echo "$KUBECONFIG_CONTENT" > kubeconfig.yaml
+  kubectl --kubeconfig=kubeconfig.yaml get ns --request-timeout=5s >/dev/null 2>&1 || {
+    echo "ERRO: kubectl nao autentica. Verificar CI var KUBECONFIG_CONTENT."; exit 1; }
+
+.deploy_auth_cleanup: &deploy_auth_cleanup |
+  rm -f "$CI_PROJECT_DIR/kubeconfig.yaml"; docker logout "$REGISTRY" || true
+
+# Build (TreatWarningsAsErrors) + testes. Runner = shell executor: o SDK roda via docker do
+# host (nao use `image:`, que o shell executor ignora).
+qualidade backend:
+  stage: qualidade
+  script:
+    - |
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD":/w -w /w mcr.microsoft.com/dotnet/sdk:10.0 \
+        sh -c "dotnet test -c Release"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# As regras fixas de seguranca do BACKEND_STACK.md §03 rodam como job proprio: quando este
+# job cai, a mensagem ja diz que uma protecao saiu, sem precisar ler a lista de testes.
+seguranca asvs:
+  stage: qualidade
+  script:
+    - |
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD":/w -w /w mcr.microsoft.com/dotnet/sdk:10.0 \
+        sh -c "dotnet test Api.Host.Tests/Api.Host.Tests.csproj -c Release --filter asvs"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Frontend Expo — tudo em Bun (install, lint, typecheck, test, export web).
+qualidade frontend:
+  stage: qualidade
+  script:
+    - |
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD/frontend":/w -w /w oven/bun:1.3 \
+        sh -c "bun install --frozen-lockfile && bun audit --audit-level=high && bun run lint && bun run typecheck && bun run test && bun run build:web"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+build to development:
+  stage: deploy
+  interruptible: false
+  before_script: [*deploy_auth_setup]
+  after_script: [*deploy_auth_cleanup]
+  script:
+    - |
+      set -e
+      KC="kubectl --kubeconfig=kubeconfig.yaml -n desenv"
+      TAG="dev-$CI_COMMIT_SHORT_SHA"
+      docker build -f Dockerfile -t "$IMG_DEV:$TAG" -t "$IMG_DEV:latest" .
+      docker push "$IMG_DEV:$TAG"; docker push "$IMG_DEV:latest"
+      if ! $KC get deployment docbrd-backend >/dev/null 2>&1; then
+        echo "=== bootstrap: aplicando k8s/desenv/ ==="; kubectl --kubeconfig=kubeconfig.yaml apply -f k8s/desenv/
+      fi
+      $KC set image deployment/docbrd-backend docbrd-backend="$IMG_DEV:$TAG"
+      $KC rollout status deployment/docbrd-backend --timeout=5m
+  environment: { name: development }
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^feature\//
+
+build to production:
+  stage: deploy
+  interruptible: false
+  before_script: [*deploy_auth_setup]
+  after_script: [*deploy_auth_cleanup]
+  script:
+    - |
+      set -e
+      KC="kubectl --kubeconfig=kubeconfig.yaml -n producao"
+      TAG="$CI_COMMIT_TAG"
+      docker build -f Dockerfile -t "$IMG_PRD:$TAG" -t "$IMG_PRD:latest" .
+      docker push "$IMG_PRD:$TAG"; docker push "$IMG_PRD:latest"
+      if ! $KC get deployment docbr-backend >/dev/null 2>&1; then
+        echo "=== bootstrap: aplicando k8s/producao/ ==="; kubectl --kubeconfig=kubeconfig.yaml apply -f k8s/producao/
+      fi
+      $KC set image deployment/docbr-backend docbr-backend="$IMG_PRD:$TAG"
+      $KC rollout status deployment/docbr-backend --timeout=5m || {
+        echo "=== rollout falhou — rollback ==="; $KC rollout undo deployment/docbr-backend; exit 1; }
+  environment: { name: production }
+  only: [tags]

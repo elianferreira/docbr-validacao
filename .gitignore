@@ -1,0 +1,12 @@
+bin/
+obj/
+.env
+.env.local
+*.user
+publish/
+
+# frontend Expo
+node_modules/
+.expo/
+dist/
+web-build/

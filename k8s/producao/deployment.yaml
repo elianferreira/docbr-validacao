@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docbr-backend
+  namespace: producao
+  labels:
+    network: internal
+  annotations:
+    description: "docbr: backend .NET 10 (Api.Host), validacao de documentos brasileiros — producao."
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: docbr-backend
+  template:
+    metadata:
+      labels:
+        app: docbr-backend
+    spec:
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: skdocker-regcred
+      containers:
+        - name: docbr-backend
+          image: skdocker.univali.br/sistemas/docbr-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TZ
+              value: "America/Sao_Paulo"
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+            # O servico nao tem banco nem GAM: e calculo puro sobre o numero enviado.
+            # A unica config que ele exige e o teto de upload e os tetos de rate limit.
+            - name: Ocr__TamanhoMaximoBytes
+              value: "20971520"
+            # Vazio de proposito: a pasta de diagnostico grava a imagem do documento em disco,
+            # e imagem de documento e dado pessoal. So se liga para investigar, nunca em producao.
+            - name: Ocr__PastaDeDiagnostico
+              value: ""
+            - name: RateLimit__DocumentosPorMinuto
+              value: "60"
+            - name: RateLimit__OcrPorMinuto
+              value: "10"
+          # As probes batem em "/" (anonimo e sem dependencia). NUNCA em /health: ele checa o
+          # motor de OCR e derrubaria o pod (convencao Univali, AGENTS.md do univali-stack).
+          startupProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "500m"
+              # O Tesseract carrega os dois modelos de idioma (~6 MB) e renderiza PDF a 300 DPI:
+              # a memoria e bem mais alta que a de um CRUD.
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"

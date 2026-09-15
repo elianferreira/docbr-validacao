@@ -1,0 +1,126 @@
+# Pipeline padrão Univali (skapp) para app Expo — imagem única do export web.
+# desenv: push em main/feature/* -> build+push (dev-<sha>) + rollout no ns desenv.
+# prod:   tag (1.0.NNN)          -> build+push (<tag>) + rollout no ns producao (rollback no smoke fail).
+#
+# Tudo roda em **Bun** (install, lint, typecheck, Vitest, audit e o `expo export` do
+# Dockerfile). Node só entraria no job de `jest-expo`, que este template não traz:
+# `jest-expo` só existe em app com alvo nativo — ver AGENTS.md deste app.
+#
+# CI vars de grupo:
+#   REGISTRY/REGISTRY_USER/REGISTRY_PASSWORD (docker login skdocker)
+#   KUBECONFIG_CONTENT (kubeconfig do cluster)
+stages:
+  - qualidade
+  - deploy
+
+default:
+  interruptible: true
+
+variables:
+  IMG_DEV: "skdocker.univali.br/sistemas/docbr-validacaod"
+  IMG_PRD: "skdocker.univali.br/sistemas/docbr-validacao"
+  BUN_IMAGE: "oven/bun:1.3.13"
+
+.qualidade_rules: &qualidade_rules
+  - if: $CI_COMMIT_BRANCH
+  - if: $CI_COMMIT_TAG
+
+.deploy_auth_setup: &deploy_auth_setup |
+  echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+  echo "$KUBECONFIG_CONTENT" > kubeconfig.yaml
+  kubectl --kubeconfig=kubeconfig.yaml get ns --request-timeout=5s >/dev/null 2>&1 || {
+    echo "ERRO: kubectl nao autentica. Verificar a CI var KUBECONFIG_CONTENT (token Rancher)."; exit 1; }
+
+.deploy_auth_cleanup: &deploy_auth_cleanup |
+  rm -f "$CI_PROJECT_DIR/kubeconfig.yaml"; docker logout "$REGISTRY" || true
+
+.deploy_diag_on_failure: &deploy_diag_on_failure |
+  if [ "$CI_JOB_STATUS" = "failed" ] && [ -f kubeconfig.yaml ] && [ -n "$NS" ] && [ -n "$DEPLOY" ]; then
+    K="kubectl --kubeconfig=kubeconfig.yaml --request-timeout=10s -n $NS"
+    echo "=== diagnostico: ns $NS deployment $DEPLOY ==="
+    $K get events --sort-by=.lastTimestamp 2>&1 | tail -20 || true
+    $K get pods -l app=$DEPLOY -o wide 2>&1 || true
+    for POD in $($K get pods -l app=$DEPLOY -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+      echo "--- logs $POD ---"; $K logs "$POD" --tail=40 2>&1 || true
+    done
+  fi
+
+# Lint + typecheck + teste sob Bun. Runner = shell executor: bun roda via docker do
+# host (não use `image:`, que o shell executor ignora).
+qualidade:
+  stage: qualidade
+  script:
+    - |
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD":/w -w /w "$BUN_IMAGE" \
+        sh -c "bun install --frozen-lockfile && bun run lint && bun run typecheck && bun run test"
+  rules: *qualidade_rules
+
+# Auditoria de vulnerabilidades — BLOQUEIA em high/critical.
+auditoria:
+  stage: qualidade
+  script:
+    - |
+      docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "$PWD":/w -w /w "$BUN_IMAGE" \
+        sh -c "bun install --frozen-lockfile && bun audit --audit-level=high"
+  rules: *qualidade_rules
+
+build to development:
+  stage: deploy
+  interruptible: false
+  variables: { NS: desenv, DEPLOY: docbr-validacaod }
+  before_script: [*deploy_auth_setup]
+  after_script: [*deploy_diag_on_failure, *deploy_auth_cleanup]
+  script:
+    - |
+      set -e
+      KC="kubectl --kubeconfig=kubeconfig.yaml -n desenv"
+      TAG="dev-$CI_COMMIT_SHORT_SHA"
+      docker build -t "$IMG_DEV:$TAG" -t "$IMG_DEV:latest" .
+      docker push "$IMG_DEV:$TAG"; docker push "$IMG_DEV:latest"
+      if ! $KC get deployment docbr-validacaod >/dev/null 2>&1; then
+        echo "=== bootstrap: aplicando k8s/desenv/ ==="; kubectl --kubeconfig=kubeconfig.yaml apply -f k8s/desenv/
+      fi
+      $KC set image deployment/docbr-validacaod docbr-validacaod="$IMG_DEV:$TAG"
+      $KC rollout status deployment/docbr-validacaod --timeout=5m
+  environment: { name: development, url: https://docbr-validacaod.univali.br }
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^feature\//
+
+build to production:
+  stage: deploy
+  interruptible: false
+  variables: { NS: producao, DEPLOY: docbr-validacao }
+  before_script: [*deploy_auth_setup]
+  after_script: [*deploy_diag_on_failure, *deploy_auth_cleanup]
+  script:
+    - |
+      set -e
+      KC="kubectl --kubeconfig=kubeconfig.yaml -n producao"
+      TAG="$CI_COMMIT_TAG"
+      docker build -t "$IMG_PRD:$TAG" -t "$IMG_PRD:latest" .
+      docker push "$IMG_PRD:$TAG"; docker push "$IMG_PRD:latest"
+      if ! $KC get deployment docbr-validacao >/dev/null 2>&1; then
+        echo "=== bootstrap: aplicando k8s/producao/ ==="; kubectl --kubeconfig=kubeconfig.yaml apply -f k8s/producao/
+      fi
+      $KC set image deployment/docbr-validacao docbr-validacao="$IMG_PRD:$TAG"
+      $KC rollout status deployment/docbr-validacao --timeout=5m || {
+        echo "=== rollout falhou — rollback ==="; $KC rollout undo deployment/docbr-validacao; exit 1; }
+  environment: { name: production, url: https://docbr-validacao.univali.br }
+  only: [tags]
+
+# Aplica manifests + (re)cria Secret a partir de CI var File (manual).
+provision desenv:
+  stage: deploy
+  when: manual
+  variables: { NS: desenv, DEPLOY: docbr-validacaod }
+  before_script: [*deploy_auth_setup]
+  after_script: [*deploy_auth_cleanup]
+  script:
+    - kubectl --kubeconfig=kubeconfig.yaml apply -f k8s/desenv/
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      when: manual
+      allow_failure: true

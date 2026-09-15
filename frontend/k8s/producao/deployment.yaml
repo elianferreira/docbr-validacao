@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docbr-validacao
+  namespace: producao
+  labels:
+    network: internal
+  annotations:
+    description: "docbr-validacao: frontend Expo (web, expo export) — produção."
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docbr-validacao
+  template:
+    metadata:
+      labels:
+        app: docbr-validacao
+    spec:
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: skdocker-regcred
+      securityContext:
+        # UID numérico: com nome o kubelet não verifica o UID e recusa o pod.
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: docbr-validacao
+          image: skdocker.univali.br/sistemas/docbr-validacao:latest
+          imagePullPolicy: Always
+          ports:
+            # nginx não-root escuta 8080; o Service mapeia 80 -> 8080.
+            - containerPort: 8080
+          env:
+            - name: TZ
+              value: "America/Sao_Paulo"
+          # Probe em "/" (estático, anônimo, sempre responde). NUNCA em /health de
+          # backend: auth + banco derrubariam o pod.
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

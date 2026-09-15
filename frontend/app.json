@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "docbr-validacao",
+    "slug": "docbr-validacao",
+    "scheme": "docbr-validacao",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "br.univali.docbr-validacao"
+    },
+    "android": {
+      "package": "br.univali.docbr-validacao"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "lang": "pt-BR"
+    },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}

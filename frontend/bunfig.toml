@@ -1,0 +1,14 @@
+# Toolchain: Bun — e é o runtime de tudo, inclusive do Metro (`expo start`,
+# `expo export`). Ver "Bun é o runtime" no PLANO_EXPO.md.
+[install]
+exact = false
+# node_modules plano: Metro e jest resolvem pelo resolver nativo do node e quebram
+# no layout isolado do bun.
+linker = "hoisted"
+
+# Pacotes @univali/* vêm do GitLab Package Registry (projeto univali-stack = 64).
+# Só é usado quando o app declarar dependência `@univali/*` — o template não declara
+# nenhuma hoje (os pacotes ainda são DOM/0.1.0; ver Fase 3 do PLANO_EXPO.md).
+# Exporte GITLAB_NPM_TOKEN (PAT/deploy token com read_package_registry) antes do install.
+[install.scopes]
+"@univali" = { url = "https://siaiap92.univali.br/api/v4/projects/64/packages/npm/", token = "$GITLAB_NPM_TOKEN" }

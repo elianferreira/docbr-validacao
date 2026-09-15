@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Api.Host/Api.Host.csproj" />
+  <Project Path="Api.Host.Tests/Api.Host.Tests.csproj" />
+  <Project Path="DocBr.Validacao/DocBr.Validacao.csproj" />
+  <Project Path="DocBr.Validacao.Tests/DocBr.Validacao.Tests.csproj" />
+  <Project Path="DocBr.Ocr/DocBr.Ocr.csproj" />
+  <Project Path="DocBr.Cli/DocBr.Cli.csproj" />
+</Solution>

@@ -1,0 +1,11 @@
+**/bin
+**/obj
+.git
+.env
+.env.local
+frontend
+k8s
+tools
+*Tests
+.gitlab-ci.yml
+*.md

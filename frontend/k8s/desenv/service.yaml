@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: docbr-validacaod
+  namespace: desenv
+spec:
+  selector:
+    app: docbr-validacaod
+  ports:
+    - name: http
+      port: 80
+      # nginx roda não-root e escuta 8080 dentro do pod.
+      targetPort: 8080
+  type: ClusterIP
