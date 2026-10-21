@@ -8,34 +8,30 @@ using Tesseract;
 namespace DocBr.Ocr;
 
 /// <summary>
-/// Lê um arquivo de CNH (JPG, PNG, WEBP, BMP, TIFF ou PDF), extrai o texto por OCR
-/// e devolve os números de 11 dígitos encontrados, cada um já validado.
+/// Lê um arquivo de documento (JPG, PNG, WEBP, BMP, TIFF ou PDF), extrai o texto por OCR
+/// e devolve os números encontrados do tipo pedido, cada um já validado.
 /// </summary>
 /// <remarks>
 /// <para>
 /// OCR de foto de documento é uma heurística, não uma leitura confiável: iluminação,
-/// foco, holograma e fundo de segurança da CNH derrubam a taxa de acerto. Por isso a
-/// classe devolve uma <em>lista de candidatos</em> com o texto reconhecido em volta de
-/// cada um, e nunca decide sozinha — quem confirma é a pessoa na tela.
+/// foco, holograma e fundo de segurança derrubam a taxa de acerto. Por isso a classe
+/// devolve uma <em>lista de candidatos</em> com o texto reconhecido em volta de cada um,
+/// e nunca decide sozinha — quem confirma é a pessoa na tela.
+/// </para>
+/// <para>
+/// O que muda de um tipo para outro (tamanho, rótulos do campo, validador) vem no
+/// <see cref="PerfilDeLeitura"/>; o pré-processamento da imagem é o mesmo para todos.
 /// </para>
 /// <para>
 /// A validação continua sendo estrutural (módulo 11). Extrair o número de uma foto não
 /// prova que a foto é de um documento verdadeiro.
 /// </para>
 /// </remarks>
-public sealed class ExtratorCnh : IDisposable
+public sealed class ExtratorDocumento : IDisposable
 {
-    private static readonly Regex SequenciaDeDigitos = new(@"\d[\d\s.\-]{9,20}\d", RegexOptions.Compiled);
-
-    // Deliberadamente restrito ao rótulo do campo. "CNH" e "HABILITAÇÃO" aparecem no título
-    // do documento e marcariam como rotulado qualquer número da página.
-    private static readonly string[] PalavrasChave =
-        ["REGISTRO", "REGISTO", "REG N", "REGN", "N REG", "Nº REG"];
-
     private static readonly string[] ExtensoesDeImagem =
         [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"];
 
-    private readonly ValidadorCnh _validador = new();
     private readonly TesseractEngine _engine;
     private bool _descartado;
 
@@ -45,7 +41,7 @@ public sealed class ExtratorCnh : IDisposable
     /// <c>tessdata</c> ao lado do binário.
     /// </param>
     /// <param name="idioma">Idiomas do Tesseract, separados por <c>+</c>.</param>
-    public ExtratorCnh(string? caminhoTessdata = null, string idioma = "por+eng")
+    public ExtratorDocumento(string? caminhoTessdata = null, string idioma = "por+eng")
     {
         caminhoTessdata ??= Path.Combine(AppContext.BaseDirectory, "tessdata");
 
@@ -96,12 +92,18 @@ public sealed class ExtratorCnh : IDisposable
     /// <summary>Lista, para exibição na tela, as extensões aceitas.</summary>
     public static IReadOnlyList<string> ExtensoesAceitas => [".pdf", .. ExtensoesDeImagem];
 
-    /// <summary>Lê o arquivo e devolve os candidatos a número de CNH encontrados.</summary>
+    /// <summary>Lê o arquivo e devolve os candidatos ao documento pedido.</summary>
     /// <param name="conteudo">Bytes do arquivo enviado.</param>
     /// <param name="nomeDoArquivo">Nome original, usado apenas para descobrir a extensão.</param>
+    /// <param name="perfil">Que documento procurar: tamanho, rótulos do campo e validador.</param>
     /// <param name="maximoDePaginas">Teto de páginas de PDF processadas, para limitar o tempo de resposta.</param>
-    public ResultadoExtracao Extrair(byte[] conteudo, string nomeDoArquivo, int maximoDePaginas = 5)
+    public ResultadoExtracao Extrair(
+        byte[] conteudo,
+        string nomeDoArquivo,
+        PerfilDeLeitura perfil,
+        int maximoDePaginas = 5)
     {
+        ArgumentNullException.ThrowIfNull(perfil);
         ObjectDisposedException.ThrowIf(_descartado, this);
 
         if (conteudo.Length == 0)
@@ -142,21 +144,35 @@ public sealed class ExtratorCnh : IDisposable
             return ResultadoExtracao.Falha("O PDF não tem páginas legíveis.");
 
         var texto = new StringBuilder();
-        var candidatos = new List<CandidatoCnh>();
+        var candidatos = new List<CandidatoDocumento>();
+
+        // Foto deitada é comum (documento em pé fotografado com o celular na horizontal), mas
+        // ler a página inteira nos quatro giros custa minutos. O giro é escolhido numa miniatura,
+        // e a página em tamanho cheio só é lida nele.
+        List<float> orientacoes;
+
+        try
+        {
+            orientacoes = paginas.Select(EscolherOrientacao).ToList();
+        }
+        catch (Exception excecao)
+        {
+            return ResultadoExtracao.Falha($"Falha no OCR: {excecao.Message}");
+        }
 
         // Foto torta é a degradação que mais derruba o OCR, e corrigi-la custa caro.
         // Então só se paga por ela quando a leitura reta não produziu nada confiável.
         foreach (var inclinacao in Inclinacoes)
         {
-            foreach (var pagina in paginas)
+            for (var indice = 0; indice < paginas.Count; indice++)
             {
                 try
                 {
-                    var preparada = Preparar(pagina, inclinacao);
+                    var preparada = Preparar(paginas[indice], orientacoes[indice] + inclinacao);
 
-                    GravarDiagnostico(preparada, inclinacao);
+                    GravarDiagnostico(preparada, orientacoes[indice] + inclinacao);
 
-                    // Duas passadas: a normal recupera os rótulos ("REGISTRO"), e a restrita a
+                    // Duas passadas: a normal recupera os rótulos do campo, e a restrita a
                     // dígitos costuma acertar o número onde a normal confunde letra com algarismo.
                     texto.AppendLine(ReconhecerTexto(preparada, apenasDigitos: false));
                     texto.AppendLine(ReconhecerTexto(preparada, apenasDigitos: true));
@@ -167,7 +183,7 @@ public sealed class ExtratorCnh : IDisposable
                 }
             }
 
-            candidatos = ExtrairCandidatos(texto.ToString());
+            candidatos = ExtrairCandidatos(texto.ToString(), perfil);
 
             if (candidatos.Count > 0 && candidatos[0].Confianca >= ConfiancaCandidato.Media)
                 break;
@@ -177,10 +193,11 @@ public sealed class ExtratorCnh : IDisposable
 
         var mensagem = candidatos.Count switch
         {
-            0 => "Nenhuma sequência de 11 dígitos foi encontrada no documento. Digite o número da CNH manualmente.",
+            0 => $"Nenhuma sequência de {perfil.Tamanho} caracteres foi encontrada no documento. " +
+                 $"Digite o número do documento ({perfil.Nome}) manualmente.",
 
             _ when candidatos[0].Confianca >= ConfiancaCandidato.Media =>
-                "Número de CNH localizado e validado. Confira contra o documento antes de aceitar.",
+                $"Número de {perfil.Nome} localizado e validado. Confira contra o documento antes de aceitar.",
 
             // Este caso é traiçoeiro: existe número válido, mas ele foi recortado de uma
             // sequência maior (data colada a outro campo, por exemplo) e provavelmente não
@@ -189,11 +206,70 @@ public sealed class ExtratorCnh : IDisposable
                 "Foi encontrado um número que passa na validação, mas ele saiu do meio de uma " +
                 "sequência maior e pode não estar no documento. Confira e digite o número manualmente.",
 
-            _ => "Foram encontrados números de 11 dígitos, mas nenhum passou na validação. " +
-                 "O OCR pode ter lido algum dígito errado — confira e corrija manualmente."
+            _ => $"Foram encontrados números de {perfil.Tamanho} caracteres, mas nenhum passou na " +
+                 "validação. O OCR pode ter lido algum dígito errado — confira e corrija manualmente."
         };
 
         return new ResultadoExtracao(true, mensagem, candidatos, reconhecido, paginas.Count);
+    }
+
+    /// <summary>Giros de quarto de volta candidatos a orientação da página.</summary>
+    private static readonly float[] Orientacoes = [0f, -90f, 90f, 180f];
+
+    /// <summary>Largura da miniatura usada só para descobrir a orientação.</summary>
+    private const int LarguraDaMiniatura = 1200;
+
+    /// <summary>
+    /// Descobre em que giro a página está de pé: lê uma miniatura em cada quarto de volta e fica
+    /// com o que produz mais palavras reconhecidas com confiança. Texto de cabeça para baixo ou
+    /// de lado vira ruído de poucas letras, então a contagem separa bem os giros.
+    /// </summary>
+    private float EscolherOrientacao(byte[] pagina)
+    {
+        _engine.SetVariable("tessedit_char_whitelist", string.Empty);
+
+        var melhor = 0f;
+        var melhorPontuacao = -1;
+
+        foreach (var orientacao in Orientacoes)
+        {
+            using var pix = Pix.LoadFromMemory(Preparar(pagina, orientacao, LarguraDaMiniatura));
+            using var leitura = _engine.Process(pix, PageSegMode.SparseText);
+
+            var pontuacao = PalavrasConfiaveis(leitura);
+
+            if (pontuacao > melhorPontuacao)
+            {
+                melhorPontuacao = pontuacao;
+                melhor = orientacao;
+            }
+        }
+
+        return melhor;
+    }
+
+    private static int PalavrasConfiaveis(Page leitura)
+    {
+        const float ConfiancaMinima = 70f;
+
+        var total = 0;
+        using var iterador = leitura.GetIterator();
+        iterador.Begin();
+
+        do
+        {
+            var palavra = iterador.GetText(PageIteratorLevel.Word);
+
+            if (palavra is not null
+                && palavra.Count(char.IsLetterOrDigit) >= 3
+                && iterador.GetConfidence(PageIteratorLevel.Word) >= ConfiancaMinima)
+            {
+                total++;
+            }
+        }
+        while (iterador.Next(PageIteratorLevel.Word));
+
+        return total;
     }
 
     private string ReconhecerTexto(byte[] imagem, bool apenasDigitos)
@@ -209,36 +285,36 @@ public sealed class ExtratorCnh : IDisposable
     /// <summary>Quantos candidatos recusados são devolvidos, além de todos os válidos.</summary>
     private const int TetoDeCandidatosInvalidos = 6;
 
-    private List<CandidatoCnh> ExtrairCandidatos(string texto)
+    private static List<CandidatoDocumento> ExtrairCandidatos(string texto, PerfilDeLeitura perfil)
     {
         var textoNormalizado = texto.ToUpperInvariant();
         var vistos = new HashSet<string>();
-        var candidatos = new List<CandidatoCnh>();
+        var candidatos = new List<CandidatoDocumento>();
 
-        foreach (Match ocorrencia in SequenciaDeDigitos.Matches(texto))
+        foreach (Match ocorrencia in perfil.Sequencias(texto))
         {
-            var digitos = new string(ocorrencia.Value.Where(char.IsDigit).ToArray());
-            var isolado = digitos.Length == 11;
+            var caracteres = perfil.Normalizar(ocorrencia.Value);
+            var isolado = caracteres.Length == perfil.Tamanho;
 
-            // Uma sequência longa (CPF colado a uma data, por exemplo) pode conter a CNH,
-            // então percorremos todas as janelas de 11 dígitos dentro dela. Isso fabrica
-            // muitos números falsos, por isso a janela recortada nasce marcada como não
-            // isolada e cai para o fim da ordenação.
-            for (var inicio = 0; inicio + 11 <= digitos.Length; inicio++)
+            // Uma sequência longa (um número colado a uma data, por exemplo) pode conter o
+            // documento, então percorremos todas as janelas do tamanho certo dentro dela.
+            // Isso fabrica muitos números falsos, por isso a janela recortada nasce marcada
+            // como não isolada e cai para o fim da ordenação.
+            for (var inicio = 0; inicio + perfil.Tamanho <= caracteres.Length; inicio++)
             {
-                var numero = digitos.Substring(inicio, 11);
+                var numero = caracteres.Substring(inicio, perfil.Tamanho);
 
                 if (!vistos.Add(numero))
                     continue;
 
-                var validacao = _validador.Validar(numero);
+                var validacao = perfil.Validador.Validar(numero);
 
-                candidatos.Add(new CandidatoCnh(
+                candidatos.Add(new CandidatoDocumento(
                     numero,
-                    validacao.Valido ? _validador.Formatar(numero) : numero,
+                    validacao.Valido ? perfil.Validador.Formatar(numero) : numero,
                     validacao,
                     Contexto(texto, ocorrencia.Index, ocorrencia.Length),
-                    TemPalavraChavePerto(textoNormalizado, ocorrencia.Index),
+                    TemRotuloPerto(textoNormalizado, ocorrencia.Index, perfil),
                     isolado));
             }
         }
@@ -266,14 +342,14 @@ public sealed class ExtratorCnh : IDisposable
         return texto[inicio..fim].Replace('\n', ' ').Replace('\r', ' ').Trim();
     }
 
-    private static bool TemPalavraChavePerto(string textoMaiusculo, int indice)
+    private static bool TemRotuloPerto(string textoMaiusculo, int indice, PerfilDeLeitura perfil)
     {
         const int Janela = 45;
 
         var inicio = Math.Max(0, indice - Janela);
         var trecho = textoMaiusculo[inicio..Math.Min(textoMaiusculo.Length, indice + Janela)];
 
-        return PalavrasChave.Any(trecho.Contains);
+        return perfil.TemRotulo(trecho);
     }
 
     private void GravarDiagnostico(byte[] imagem, float inclinacao)
@@ -288,8 +364,8 @@ public sealed class ExtratorCnh : IDisposable
     }
 
     /// <summary>
-    /// Correções de inclinação tentadas, em ordem. A primeira é "não mexer": a maioria dos
-    /// arquivos é reta e não deve pagar o custo das outras passadas.
+    /// Correções de inclinação tentadas, em ordem, somadas à orientação da página. A primeira é
+    /// "não mexer": a maioria dos arquivos é reta e não deve pagar o custo das outras passadas.
     /// </summary>
     private static readonly float[] Inclinacoes = [0f, -5f, 5f];
 
@@ -304,27 +380,41 @@ public sealed class ExtratorCnh : IDisposable
     /// Medido numa bateria de degradações de foto: sem esta etapa, imagem reduzida,
     /// com pouco contraste ou com sombra simplesmente não produzem leitura.
     /// </remarks>
-    private static byte[] Preparar(byte[] imagem, float inclinacao)
+    private static byte[] Preparar(byte[] imagem, float inclinacao, int? larguraMaxima = null)
     {
         using var original = SKBitmap.Decode(imagem);
 
         if (original is null)
             return imagem;
 
-        var escala = original.Width < LarguraMinima
-            ? Math.Min(3f, (float)LarguraMinima / original.Width)
-            : 1f;
+        var escala = larguraMaxima is { } teto
+            ? Math.Min(1f, (float)teto / Math.Max(original.Width, original.Height))
+            : original.Width < LarguraMinima
+                ? Math.Min(3f, (float)LarguraMinima / original.Width)
+                : 1f;
 
         var largura = (int)(original.Width * escala);
         var altura = (int)(original.Height * escala);
 
-        using var destino = new SKBitmap(largura, altura, SKColorType.Bgra8888, SKAlphaType.Premul);
+        // A tela cresce para caber a página girada inteira; num quarto de volta, largura e
+        // altura simplesmente trocam de lugar.
+        var radianos = inclinacao * MathF.PI / 180f;
+        var cosseno = MathF.Abs(MathF.Round(MathF.Cos(radianos), 6));
+        var seno = MathF.Abs(MathF.Round(MathF.Sin(radianos), 6));
+        var larguraFinal = (int)MathF.Ceiling(largura * cosseno + altura * seno);
+        var alturaFinal = (int)MathF.Ceiling(largura * seno + altura * cosseno);
+
+        using var destino = new SKBitmap(larguraFinal, alturaFinal, SKColorType.Bgra8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(destino);
 
         canvas.Clear(SKColors.White);
 
         if (inclinacao != 0f)
-            canvas.RotateDegrees(inclinacao, largura / 2f, altura / 2f);
+        {
+            canvas.Translate(larguraFinal / 2f, alturaFinal / 2f);
+            canvas.RotateDegrees(inclinacao);
+            canvas.Translate(-largura / 2f, -altura / 2f);
+        }
 
         using var tinta = new SKPaint
         {
@@ -380,20 +470,39 @@ public sealed class ExtratorCnh : IDisposable
     {
         var paginas = new List<byte[]>();
         var total = PDFtoImage.Conversion.GetPageCount(pdf);
+        var tamanhos = PDFtoImage.Conversion.GetPageSizes(pdf);
 
         for (var indice = 0; indice < Math.Min(total, maximoDePaginas); indice++)
         {
-            // 300 DPI é o mínimo em que o Tesseract lê texto pequeno de documento com alguma chance.
             using var bitmap = PDFtoImage.Conversion.ToImage(
                 pdf,
                 page: indice,
-                options: new PDFtoImage.RenderOptions(Dpi: 300));
+                options: new PDFtoImage.RenderOptions(Dpi: DpiDaPagina(tamanhos[indice])));
 
             using var dados = bitmap.Encode(SKEncodedImageFormat.Png, 100);
             paginas.Add(dados.ToArray());
         }
 
         return paginas;
+    }
+
+    /// <summary>Maior lado, em pixels, de uma página de PDF renderizada.</summary>
+    private const int LadoMaximoRenderizado = 3500;
+
+    /// <summary>
+    /// 300 DPI é o mínimo em que o Tesseract lê texto pequeno de documento A4 com alguma chance.
+    /// Mas foto de celular salva em PDF costuma declarar a página no tamanho da foto a 72 ppi
+    /// (1487 × 2286 pt, medido), e 300 DPI ali vira 6200 × 9500 px: o OCR leva minutos e lê
+    /// o fundo guilhochado como texto. O teto no maior lado mantém a página no tamanho útil.
+    /// </summary>
+    private static int DpiDaPagina(System.Drawing.SizeF tamanhoEmPontos)
+    {
+        var maiorLado = Math.Max(tamanhoEmPontos.Width, tamanhoEmPontos.Height);
+
+        if (maiorLado <= 0)
+            return 300;
+
+        return (int)Math.Clamp(LadoMaximoRenderizado * 72f / maiorLado, 72f, 300f);
     }
 
     /// <inheritdoc />

@@ -3,25 +3,34 @@ using DocBr.Ocr;
 namespace Api.Host.Modules.Ocr.Application;
 
 /// <summary>
-/// Caso de uso de leitura de CNH por OCR. O <see cref="ExtratorCnh"/> carrega o modelo de
-/// idioma do Tesseract uma vez e NAO e seguro para uso concorrente, entao ele e singleton e
-/// as chamadas sao serializadas pelo semaforo deste servico.
+/// Caso de uso de leitura de documento por OCR. O <see cref="ExtratorDocumento"/> carrega o
+/// modelo de idioma do Tesseract uma vez e NAO e seguro para uso concorrente, entao ele e
+/// singleton e as chamadas sao serializadas pelo semaforo deste servico.
 /// </summary>
-public sealed class OcrService(ExtratorCnh extrator)
+public sealed class OcrService(ExtratorDocumento extrator)
 {
     private static readonly SemaphoreSlim Trava = new(1, 1);
 
     /// <summary>Extensoes de arquivo aceitas no upload.</summary>
-    public static IReadOnlyList<string> ExtensoesAceitas => ExtratorCnh.ExtensoesAceitas;
+    public static IReadOnlyList<string> ExtensoesAceitas => ExtratorDocumento.ExtensoesAceitas;
+
+    /// <summary>Slugs de documento que o OCR sabe procurar, para a mensagem de recusa.</summary>
+    public static IReadOnlyList<string> TiposSuportados =>
+        [.. PerfilDeLeitura.Todos.Select(perfil => perfil.Slug)];
 
     /// <summary>Indica se o nome do arquivo tem uma extensao que o extrator sabe abrir.</summary>
     public static bool ExtensaoSuportada(string nomeDoArquivo) =>
-        ExtratorCnh.ExtensaoSuportada(nomeDoArquivo);
+        ExtratorDocumento.ExtensaoSuportada(nomeDoArquivo);
 
-    /// <summary>Le o arquivo e devolve os candidatos encontrados.</summary>
+    /// <summary>
+    /// Le o arquivo e devolve os candidatos ao documento pedido. O tipo vem da rota porque a
+    /// busca e por tamanho e rotulo: CPF e CNH tem os mesmos 11 digitos, e uma CNH traz os
+    /// dois impressos — sem saber o que se procura, nao ha como escolher entre eles.
+    /// </summary>
     public async Task<ResultadoExtracaoDto> ExtrairAsync(
         byte[] conteudo,
         string nomeDoArquivo,
+        PerfilDeLeitura perfil,
         CancellationToken cancelamento)
     {
         await Trava.WaitAsync(cancelamento);
@@ -30,7 +39,7 @@ public sealed class OcrService(ExtratorCnh extrator)
 
         try
         {
-            resultado = extrator.Extrair(conteudo, nomeDoArquivo);
+            resultado = extrator.Extrair(conteudo, nomeDoArquivo, perfil);
         }
         finally
         {
@@ -40,6 +49,7 @@ public sealed class OcrService(ExtratorCnh extrator)
         return new ResultadoExtracaoDto(
             Sucesso: resultado.Sucesso,
             Mensagem: resultado.Mensagem,
+            Tipo: perfil.Slug,
             Arquivo: nomeDoArquivo,
             PaginasLidas: resultado.PaginasLidas,
             Resposta: resultado.Resposta?.Formatado,

@@ -12,7 +12,7 @@ import type { ItemNav } from './AppLayout'
 const NAV: ItemNav[] = [
   { para: '/validar', rotulo: 'Validar' },
   { para: '/identificar', rotulo: 'Identificar' },
-  { para: '/cnh', rotulo: 'Ler CNH' },
+  { para: '/arquivo', rotulo: 'Ler arquivo' },
 ]
 
 /**
@@ -36,9 +36,9 @@ const TITULOS: Array<[string, { titulo: string; subtitulo?: string }]> = [
     },
   ],
   [
-    '/cnh',
+    '/arquivo',
     {
-      titulo: 'Ler CNH de arquivo',
+      titulo: 'Ler documento de arquivo',
       subtitulo: 'OCR sobre imagem ou PDF. A leitura e uma heuristica, nao uma certeza.',
     },
   ],

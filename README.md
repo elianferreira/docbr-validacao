@@ -1,6 +1,6 @@
 # DocBr — validação de documentos brasileiros
 
-Valida a **estrutura** de nove documentos brasileiros, lê o número de uma CNH a partir de
+Valida a **estrutura** de nove documentos brasileiros, lê o número de CNH, CPF e RG a partir de
 foto ou PDF, e expõe tudo como API, CLI e app web.
 
 > Validação estrutural não prova que o documento existe, que é autêntico, nem que está
@@ -28,7 +28,7 @@ dotnet run --project DocBr.Cli -- cpf --gerar 5
 dotnet run --project DocBr.Cli -- --identificar 35440631331
 
 # testes
-dotnet test                                   # 91, backend inteiro
+dotnet test                                   # 104, backend inteiro
 dotnet test Api.Host.Tests --filter asvs      # regras fixas de segurança
 cd frontend; bun run test
 ```
@@ -41,7 +41,7 @@ cd frontend; bun run test
 | `POST /api/documentos/{slug}/numero` | Valida um número contra um tipo. |
 | `GET /api/documentos/{slug}/exemplo` | Gera um número válido do tipo (massa de teste). |
 | `POST /api/documentos/identificar` | Lista os tipos que aceitam o número informado. |
-| `POST /api/documentos/cnh/arquivo` | Lê o número da CNH de uma imagem ou PDF (multipart). |
+| `POST /api/documentos/{slug}/arquivo` | Lê o número de uma imagem ou PDF (multipart). Só `cnh`, `cpf` e `rg-sp`. |
 | `GET /` | Raiz anônima — é onde as probes do k8s batem. |
 | `GET /health` | Estado do motor de OCR. |
 

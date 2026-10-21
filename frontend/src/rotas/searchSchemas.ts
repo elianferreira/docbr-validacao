@@ -57,3 +57,20 @@ export const identificarSearchSchema = z.object({
 })
 
 export type IdentificarSearch = z.infer<typeof identificarSearchSchema>
+
+/**
+ * Tipos que o OCR sabe procurar num arquivo. E um subconjunto do catalogo, porque cada
+ * um exige um perfil de leitura (tamanho + rotulos do campo) no backend — a lista vive
+ * em `PerfilDeLeitura` e e contrato, por isso fica escrita aqui tambem.
+ */
+export const TIPOS_COM_OCR = ['cnh', 'cpf', 'rg-sp'] as const
+
+/**
+ * Filtro da tela de leitura por arquivo: so o tipo procurado. O arquivo em si fica em
+ * `useState` de proposito — e dado pessoal, nao entra em link compartilhavel.
+ */
+export const arquivoSearchSchema = z.object({
+  tipo: z.enum(TIPOS_COM_OCR).catch('cnh'),
+})
+
+export type ArquivoSearch = z.infer<typeof arquivoSearchSchema>

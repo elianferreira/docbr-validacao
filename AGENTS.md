@@ -9,7 +9,7 @@ arquitetura aqui. Este arquivo só registra o que **não** se deduz lendo o cód
 
 ```powershell
 # backend
-dotnet test                                  # 91 testes (solução inteira)
+dotnet test                                  # 104 testes (solução inteira)
 dotnet test Api.Host.Tests --filter asvs     # só as regras fixas de segurança do §03
 dotnet run --project Api.Host --no-launch-profile --urls http://localhost:5199
 
@@ -36,7 +36,7 @@ Layout de repo só-backend do `BACKEND_STACK.md` §05: projetos direto na raiz.
 Api.Host/              host: Program.cs, Common/, Configuration/, Modules/<Modulo>/{Api,Application}
 Api.Host.Tests/        xUnit + WebApplicationFactory (integração + ASVS)
 DocBr.Validacao/       o DOMÍNIO: 9 validadores, POCO puro, sem ASP.NET
-DocBr.Ocr/             extrator de CNH (Tesseract + PDFtoImage + SkiaSharp)
+DocBr.Ocr/             extrator por tipo de documento (Tesseract + PDFtoImage + SkiaSharp)
 DocBr.Validacao.Tests/ os 67 testes de vetor da biblioteca
 DocBr.Cli/             CLI multi-tipo
 frontend/              app Expo universal (Expo Router §09)
@@ -55,7 +55,7 @@ não há persistência, o domínio é cálculo puro e já mora nessas biblioteca
 | `RequireAuthorization()` em tudo, GAM Bearer (§03) | **Tudo anônimo**, com rate limit por IP em cada grupo | O serviço não tem banco, sessão nem dado guardado: recebe um número, calcula e responde. GAM exigiria config válida no `ValidateOnStart` para nada. A contrapartida do §03 — anônimo **sempre** com `RequireRateLimiting` — é cumprida sem exceção. |
 | `/health` checa o banco (`CanConnect`) | Checa o **motor de OCR** | Não há Oracle. A dependência externa real é o modelo de idioma do Tesseract. |
 | `AuthProvider` + `Portao` no layout raiz (§09.3/09.4) | Não existem | Decorre da linha acima: sem sessão não há o que guardar. O resto da §09 (rota fina, tela em `src/telas/`, `_layout` único com `<Slot/>`, filtro na URL com Zod, `Link` sem `asChild`) está inteiro. |
-| Filtro de tela sempre na URL (§09.6) | `TelaCnh.web` guarda o arquivo em `useState` | O conteúdo é um arquivo enviado pelo usuário — dado pessoal, que não cabe num link compartilhável. As outras duas telas seguem a regra. |
+| Filtro de tela sempre na URL (§09.6) | `TelaArquivo.web` guarda o arquivo em `useState` | O conteúdo é um arquivo enviado pelo usuário — dado pessoal, que não cabe num link compartilhável. As outras duas telas seguem a regra. |
 
 ## Gotchas medidos
 
@@ -77,7 +77,13 @@ não há persistência, o domínio é cálculo puro e já mora nessas biblioteca
 7. **Validade não é confiança, no caminho de OCR.** O módulo 11 aceita ~1 em 11 sequências por
    acaso; a janela deslizante já produziu um número válido inexistente no documento. Só vira
    resposta quem é válido **e** tem evidência de posição.
-8. **`Ocr__PastaDeDiagnostico` grava a imagem do documento em disco.** É dado pessoal: fica
+8. **Rótulo curto de campo precisa de fronteira de palavra.** `"RG"` com `Contains` casa
+   dentro de `"ORG. EMISSOR"`, impresso na própria CNH, e aí *todo* número da página vira
+   "rotulado" — perdendo justamente a evidência que separa leitura de chute. O
+   `PerfilDeLeitura` monta um regex com fronteira; há teste cobrindo esse caso.
+9. **O tipo do OCR vem da rota, nunca é adivinhado.** CPF e CNH têm os mesmos 11 dígitos e
+   uma CNH traz os dois impressos: sem o tipo pedido não há como escolher entre eles.
+10. **`Ocr__PastaDeDiagnostico` grava a imagem do documento em disco.** É dado pessoal: fica
    vazio em produção, liga-se só para investigar leitura ruim.
 
 ## Divergências deliberadas com a implementação de referência
@@ -91,8 +97,8 @@ não há persistência, o domínio é cálculo puro e já mora nessas biblioteca
 ## O que falta
 
 - **Inscrição Estadual** (27 algoritmos, um por UF) — não implementada.
-- **OCR só lê CNH.** Estender para CPF/certidão exige rótulos e tamanhos por tipo no
-  `ExtratorCnh`, que hoje tem `11` e `"REGISTRO"` embutidos.
+- **OCR lê CNH, CPF e RG-SP.** Cada tipo novo é um `PerfilDeLeitura` (tamanho, rótulos do
+  campo, validador) — a certidão de 32 dígitos ainda não tem perfil.
 - **Nunca testado com documento real** (é PII). A medição usa amostra sintética degradada;
   sombra atravessando o documento é a degradação que o Tesseract não vence.
 - **Autenticidade real** (Senatran, CRC Nacional, Receita) exige convênio.

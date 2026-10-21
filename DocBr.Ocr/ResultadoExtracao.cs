@@ -6,8 +6,8 @@ namespace DocBr.Ocr;
 /// Quanto se pode confiar em um candidato que passou na validação.
 /// </summary>
 /// <remarks>
-/// Passar no módulo 11 não basta: aproximadamente 1 em cada 11 sequências de 11 dígitos
-/// passa por acaso. Como o extrator recorta janelas de dentro de sequências maiores, uma
+/// Passar no módulo 11 não basta: aproximadamente 1 em cada 11 sequências passa por
+/// acaso. Como o extrator recorta janelas de dentro de sequências maiores, uma
 /// data colada a outro número pode produzir um número válido que não existe no documento
 /// — foi medido acontecendo. Por isso um candidato válido só é apresentado como resposta
 /// quando também tem evidência de posição.
@@ -20,27 +20,28 @@ public enum ConfiancaCandidato
     /// <summary>Válido, porém recortado de uma sequência maior e sem rótulo por perto. Não serve como resposta.</summary>
     Baixa,
 
-    /// <summary>Válido e com uma evidência de posição: ou estava isolado, ou havia o rótulo "registro" por perto.</summary>
+    /// <summary>Válido e com uma evidência de posição: ou estava isolado, ou havia o rótulo do campo por perto.</summary>
     Media,
 
-    /// <summary>Válido, isolado no texto e junto do rótulo "registro".</summary>
+    /// <summary>Válido, isolado no texto e junto do rótulo do campo.</summary>
     Alta
 }
 
-/// <summary>Um número de 11 dígitos encontrado no documento, já submetido ao validador.</summary>
-/// <param name="Numero">Os 11 dígitos, sem máscara.</param>
-/// <param name="Formatado">O número na máscara da CNH.</param>
+/// <summary>Um número encontrado no documento, já submetido ao validador do tipo pedido.</summary>
+/// <param name="Numero">Os caracteres do documento, sem máscara.</param>
+/// <param name="Formatado">O número na máscara do tipo lido.</param>
 /// <param name="Validacao">Resultado da validação estrutural.</param>
 /// <param name="Contexto">Trecho do texto reconhecido em volta do número, para conferência visual.</param>
 /// <param name="Rotulado">
-/// Indica que o número apareceu perto de uma palavra-chave da CNH ("REGISTRO", "Nº REGISTRO"),
-/// o que o torna um candidato mais confiável do que um número solto.
+/// Indica que o número apareceu perto de um rótulo do campo no perfil do tipo lido
+/// ("REGISTRO" na CNH, "CPF", "RG"), o que o torna mais confiável do que um número solto.
 /// </param>
 /// <param name="Isolado">
-/// Indica que a sequência no texto tinha exatamente 11 dígitos. Um número recortado de dentro
-/// de uma sequência maior (CPF colado a uma data, por exemplo) é bem menos confiável.
+/// Indica que a sequência no texto tinha exatamente o tamanho do documento. Um número
+/// recortado de dentro de uma sequência maior (um número colado a uma data, por exemplo)
+/// é bem menos confiável.
 /// </param>
-public sealed record CandidatoCnh(
+public sealed record CandidatoDocumento(
     string Numero,
     string Formatado,
     ResultadoValidacao Validacao,
@@ -59,25 +60,25 @@ public sealed record CandidatoCnh(
 /// <summary>Resultado completo da leitura de um arquivo enviado.</summary>
 /// <param name="Sucesso">Indica que o arquivo pôde ser lido e passado pelo OCR.</param>
 /// <param name="Mensagem">Explicação do que aconteceu, inclusive em caso de falha.</param>
-/// <param name="Candidatos">Números de 11 dígitos encontrados, os válidos primeiro.</param>
+/// <param name="Candidatos">Números do tipo pedido encontrados, os válidos primeiro.</param>
 /// <param name="TextoReconhecido">Texto bruto devolvido pelo OCR, útil para diagnosticar leitura ruim.</param>
 /// <param name="PaginasLidas">Quantas páginas/imagens foram processadas.</param>
 public sealed record ResultadoExtracao(
     bool Sucesso,
     string Mensagem,
-    IReadOnlyList<CandidatoCnh> Candidatos,
+    IReadOnlyList<CandidatoDocumento> Candidatos,
     string TextoReconhecido,
     int PaginasLidas)
 {
     /// <summary>Candidato mais provável, já ordenado por confiança.</summary>
-    public CandidatoCnh? Melhor => Candidatos.Count > 0 ? Candidatos[0] : null;
+    public CandidatoDocumento? Melhor => Candidatos.Count > 0 ? Candidatos[0] : null;
 
     /// <summary>
     /// O número que pode ser apresentado como a leitura do documento. É <c>null</c> quando
     /// nenhum candidato alcançou confiança suficiente — inclusive quando existe candidato
     /// válido, mas apenas recortado de uma sequência maior.
     /// </summary>
-    public CandidatoCnh? Resposta =>
+    public CandidatoDocumento? Resposta =>
         Melhor is { Confianca: >= ConfiancaCandidato.Media } candidato ? candidato : null;
 
     /// <summary>Cria um resultado de falha.</summary>

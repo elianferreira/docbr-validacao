@@ -25,17 +25,19 @@ public sealed record CandidatoDto(
     bool Isolado,
     string Confianca);
 
-/// <summary>Resultado da extracao de numero de CNH a partir de um arquivo enviado.</summary>
+/// <summary>Resultado da extracao de um numero de documento a partir de um arquivo enviado.</summary>
 /// <param name="Sucesso">Se a extracao produziu uma resposta apresentavel.</param>
 /// <param name="Mensagem">Explicacao do desfecho, para exibicao.</param>
+/// <param name="Tipo">Slug do documento que foi procurado (<c>cnh</c>, <c>cpf</c>, <c>rg-sp</c>).</param>
 /// <param name="Arquivo">Nome do arquivo recebido.</param>
 /// <param name="PaginasLidas">Quantidade de paginas submetidas ao OCR.</param>
-/// <param name="Resposta">Numero da CNH ja formatado, quando ha resposta confiavel.</param>
+/// <param name="Resposta">Numero ja formatado, quando ha resposta confiavel.</param>
 /// <param name="TextoReconhecido">Texto bruto devolvido pelo OCR.</param>
 /// <param name="Candidatos">Todos os candidatos avaliados, inclusive os descartados.</param>
 public sealed record ResultadoExtracaoDto(
     bool Sucesso,
     string Mensagem,
+    string Tipo,
     string Arquivo,
     int PaginasLidas,
     string? Resposta,

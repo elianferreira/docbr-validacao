@@ -13,7 +13,7 @@ public static class OcrModule
     {
         // O Tesseract carrega o modelo de idioma uma vez e nao e seguro para uso concorrente:
         // singleton aqui, serializacao no OcrService.
-        services.AddSingleton(provedor => new ExtratorCnh
+        services.AddSingleton(provedor => new ExtratorDocumento
         {
             PastaDeDiagnostico = provedor.GetRequiredService<IOptions<OcrOptions>>().Value.PastaDeDiagnostico
         });

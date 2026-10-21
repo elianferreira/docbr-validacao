@@ -119,4 +119,36 @@ public sealed class RotasPublicasTests : IClassFixture<AppDeTeste>
 
         Assert.Equal(HttpStatusCode.BadRequest, resposta.StatusCode);
     }
+
+    [Theory]
+    [InlineData("cpf")]
+    [InlineData("rg-sp")]
+    public async Task Upload_aceita_os_outros_tipos_que_o_ocr_le(string slug)
+    {
+        using var formulario = new MultipartFormDataContent
+        {
+            { new StringContent("sem arquivo"), "observacao" }
+        };
+
+        var resposta = await _app.CreateClient()
+            .PostAsync($"/api/documentos/{slug}/arquivo", formulario);
+
+        // 400 e a recusa do arquivo, nao do tipo: a rota existe para cpf e rg-sp.
+        Assert.Equal(HttpStatusCode.BadRequest, resposta.StatusCode);
+    }
+
+    [Fact]
+    public async Task Upload_de_tipo_que_o_ocr_nao_le_responde_404()
+    {
+        using var formulario = new MultipartFormDataContent
+        {
+            { new StringContent("sem arquivo"), "observacao" }
+        };
+
+        // O CNPJ esta no catalogo, mas nao ha perfil de leitura para ele.
+        var resposta = await _app.CreateClient()
+            .PostAsync("/api/documentos/cnpj/arquivo", formulario);
+
+        Assert.Equal(HttpStatusCode.NotFound, resposta.StatusCode);
+    }
 }
